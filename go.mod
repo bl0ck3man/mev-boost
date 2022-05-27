@@ -6,7 +6,6 @@ require (
 	github.com/ethereum/go-ethereum v1.10.17
 	github.com/evalphobia/logrus_sentry v0.8.2
 	github.com/flashbots/go-boost-utils v0.1.2
-	github.com/flashbots/go-utils v0.4.5
 	github.com/gorilla/mux v1.8.0
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/viper v1.12.0
@@ -19,7 +18,6 @@ require (
 	github.com/ferranbt/fastssz v0.1.1-0.20220303160658-88bb965b6747 // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/getsentry/raven-go v0.2.0 // indirect
-	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.12 // indirect
 	github.com/magiconair/properties v1.8.6 // indirect
