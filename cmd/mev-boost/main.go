@@ -1,73 +1,61 @@
 package main
 
 import (
-	"flag"
+	"context"
+	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/evalphobia/logrus_sentry"
+	"github.com/flashbots/mev-boost/internal/env"
 	"github.com/flashbots/mev-boost/server"
 	"github.com/sirupsen/logrus"
 )
 
-var (
-	version = "dev" // is set during build process
-
-	// defaults
-	defaultListenAddr     = getEnv("BOOST_LISTEN_ADDR", "localhost:18550")
-	defaultRelayURLs      = getEnv("RELAY_URLS", "localhost:28545") // can be IP@PORT, PUBKEY@IP:PORT, https://IP, etc.
-	defaultRelayTimeoutMs = getEnvInt("RELAY_TIMEOUT_MS", 2000)     // timeout for all the requests to the relay
-	defaultRelayCheck     = os.Getenv("RELAY_STARTUP_CHECK") != ""
-
-	// cli flags
-	listenAddr     = flag.String("addr", defaultListenAddr, "listen-address for mev-boost server")
-	relayURLs      = flag.String("relays", defaultRelayURLs, "relay urls - single entry or comma-separated list (pubkey@ip:port)")
-	relayTimeoutMs = flag.Int("request-timeout", defaultRelayTimeoutMs, "timeout for requests to a relay [ms]")
-	relayCheck     = flag.Bool("relay-check", defaultRelayCheck, "whether to check relay status on startup")
-)
-
-var log = logrus.WithField("module", "cmd/mev-boost")
-
 func main() {
-	flag.Parse()
-	log.Printf("mev-boost %s", version)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	relays := parseRelayURLs(*relayURLs)
+	var logger = logrus.StandardLogger()
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	log := logger.WithContext(ctx)
+
+	cfg, envErr := env.Read(ctx)
+	if envErr != nil {
+		println("Read env error:", envErr.Error())
+
+		os.Exit(1)
+	}
+
+	hook, err := logrus_sentry.NewSentryHook(cfg.AppConfig.SENTRY_DSN, []logrus.Level{
+		logrus.PanicLevel,
+		logrus.FatalLevel,
+		logrus.ErrorLevel,
+		logrus.InfoLevel,
+		logrus.WarnLevel,
+	})
+	if err != nil {
+		println(`Could not connect to sentry`)
+		os.Exit(1)
+	}
+
+	logrus.AddHook(hook)
+
+	relays := parseRelayURLs(cfg.AppConfig.RELAY_URLS)
 	if len(relays) == 0 {
 		log.Fatal("No relays specified")
 	}
 	log.WithField("relays", relays).Infof("using %d relays", len(relays))
 
-	if *relayCheck {
-		relayStartupCheck(relays)
-	}
-
-	relayTimeout := time.Duration(*relayTimeoutMs) * time.Millisecond
-	server, err := server.NewBoostService(*listenAddr, relays, log, relayTimeout)
+	relayTimeout := time.Duration(cfg.AppConfig.RELAY_TIMEOUT_MS) * time.Millisecond
+	server, err := server.NewBoostService(cfg.AppConfig.BOOST_LISTEN_ADDR, relays, log, relayTimeout)
 	if err != nil {
 		log.WithError(err).Fatal("failed creating the server")
 	}
 
-	log.Println("listening on", *listenAddr)
+	log.Println("listening on", cfg.AppConfig.BOOST_LISTEN_ADDR)
 	log.Fatal(server.StartHTTPServer())
-}
-
-func getEnv(key string, defaultValue string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value, ok := os.LookupEnv(key); ok {
-		val, err := strconv.Atoi(value)
-		if err == nil {
-			return val
-		}
-	}
-	return defaultValue
 }
 
 func parseRelayURLs(relayURLs string) []server.RelayEntry {
@@ -75,21 +63,10 @@ func parseRelayURLs(relayURLs string) []server.RelayEntry {
 	for _, entry := range strings.Split(relayURLs, ",") {
 		relay, err := server.NewRelayEntry(entry)
 		if err != nil {
-			log.WithError(err).WithField("relayURL", entry).Fatal("Invalid relay URL")
+			println(fmt.Sprintf(`Invalid relay URL %s`, entry))
+			continue
 		}
 		ret = append(ret, relay)
 	}
 	return ret
-}
-
-func relayStartupCheck(relays []server.RelayEntry) error {
-	log.Fatal("TODO: Checking relays...")
-	for _, relay := range relays {
-		log.WithField("relay", relay).Info("Checking relay")
-		// err := relay.Check()
-		// if err != nil {
-		//     log.WithError(err).WithField("relay", relay).Fatal("Relay check failed")
-		// }
-	}
-	return nil
 }
