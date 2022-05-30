@@ -424,7 +424,11 @@ func (m *BoostService) Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			fields := logrus.Fields{
-				"remote": r.RemoteAddr,
+				"remote":      r.RemoteAddr,
+				"host":        r.Host,
+				"url":         r.URL,
+				"request_uri": r.RequestURI,
+				"method":      r.Method,
 			}
 			for key, _ := range r.Header {
 				fields[key] = r.Header.Get(key)
