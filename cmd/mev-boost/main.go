@@ -31,6 +31,7 @@ var (
 	relayURLs      = flag.String("relays", "", "relay urls - single entry or comma-separated list (schema://pubkey@host)")
 	relayTimeoutMs = flag.Int("request-timeout", defaultRelayTimeoutMs, "timeout for requests to a relay [ms]")
 	relayCheck     = flag.Bool("relay-check", defaultRelayCheck, "whether to check relay status on startup")
+	collectorURL   = flag.String("collector", "", "use external mev-boost-collector server")
 
 	// helpers
 	useGenesisForkVersionMainnet = flag.Bool("mainnet", false, "use Mainnet genesis fork version 0x00000000 (for signature validation)")
@@ -65,8 +66,9 @@ func main() {
 	}
 	log.WithField("relays", relays).Infof("using %d relays", len(relays))
 
+	// mevBoostCollectorURL := getEnvString(*collectorURL)
 	relayTimeout := time.Duration(*relayTimeoutMs) * time.Millisecond
-	server, err := server.NewBoostService(*listenAddr, relays, log, genesisForkVersionHex, relayTimeout)
+	server, err := server.NewBoostService(*listenAddr, relays, log, genesisForkVersionHex, relayTimeout, *collectorURL)
 	if err != nil {
 		log.WithError(err).Fatal("failed creating the server")
 	}
@@ -76,6 +78,7 @@ func main() {
 	}
 
 	log.Println("listening on", *listenAddr)
+	log.Println("mev boost collector url", *collectorURL)
 	log.Fatal(server.StartHTTPServer())
 }
 
@@ -94,6 +97,14 @@ func getEnvInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvString(key string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return ""
+	}
+	return value
 }
 
 func parseRelayURLs(relayURLs string) []server.RelayEntry {

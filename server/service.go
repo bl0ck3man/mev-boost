@@ -56,10 +56,12 @@ type BoostService struct {
 	serverTimeouts       HTTPServerTimeouts
 
 	httpClient http.Client
+
+	collectorURL string
 }
 
 // NewBoostService created a new BoostService
-func NewBoostService(listenAddr string, relays []RelayEntry, log *logrus.Entry, genesisForkVersionHex string, relayRequestTimeout time.Duration) (*BoostService, error) {
+func NewBoostService(listenAddr string, relays []RelayEntry, log *logrus.Entry, genesisForkVersionHex string, relayRequestTimeout time.Duration, mevBoostCollectorURL string) (*BoostService, error) {
 	if len(relays) == 0 {
 		return nil, errors.New("no relays")
 	}
@@ -77,6 +79,7 @@ func NewBoostService(listenAddr string, relays []RelayEntry, log *logrus.Entry, 
 		builderSigningDomain: builderSigningDomain,
 		serverTimeouts:       NewDefaultHTTPServerTimeouts(),
 		httpClient:           http.Client{Timeout: relayRequestTimeout},
+		collectorURL:         mevBoostCollectorURL,
 	}, nil
 }
 
@@ -275,17 +278,52 @@ func (m *BoostService) handleGetHeader(w http.ResponseWriter, req *http.Request)
 			mu.Lock()
 			defer mu.Unlock()
 
-			/*
-				SEND request
-				log.WithFields(logrus.Fields{
-					`url`:                url,
-					`relayResponse`:      fmt.Sprintf("%+v", responsePayload),
-					`result`:             fmt.Sprintf("%+v", result),
-					`have to be skipped`: result.Data != nil && responsePayload.Data.Message.Value.Cmp(&result.Data.Message.Value) < 1,
-				}).Info(`handleGetHeader: relay response`)
-				if err := SendHTTPRequest(context.Background(), m.httpClient, http.MethodPost, `http://localhost:8080/payload`, responsePayload, nil); err != nil {
-					log.WithError(err).Warn("error making request to mev-boost-collector")
-				}*/
+			if responsePayload != nil && m.collectorURL != "" {
+				var wgCollector sync.WaitGroup
+				type CustomRelayPayload struct {
+					SlotNumber       uint64 `json:"slot"`
+					BlockHash        string `json:"block_hash"`
+					BlockNumber      uint64 `json:"block_number"`
+					FeeRecipient     string `json:"fee_recipient"`
+					TransactionsRoot string `json:"transactions_root"`
+					Pubkey           string `json:"pubkey"`
+					Signature        string `json:"signature"`
+					RelayAddr        string `json:"relay_adr"`
+					RelayTimestamp   string `json:"timestamp"`
+				}
+
+				wgCollector.Add(1)
+				go func(slot string, headerResponse *types.GetHeaderResponse, relayURL string) {
+					defer wg.Done()
+
+					slotNumber, err := strconv.ParseUint(slot, 10, 32)
+					if err != nil {
+						log.WithFields(logrus.Fields{
+							`slot`:  slot,
+							`relay`: relayAddr,
+						}).Warning(`Could not convert slot from string to UINT`)
+
+						return
+					}
+
+					mevBoostPayload := CustomRelayPayload{
+						SlotNumber:       slotNumber,
+						BlockHash:        headerResponse.Data.Message.Header.BlockHash.String(),
+						BlockNumber:      headerResponse.Data.Message.Header.BlockNumber,
+						FeeRecipient:     headerResponse.Data.Message.Header.FeeRecipient.String(),
+						TransactionsRoot: headerResponse.Data.Message.Header.TransactionsRoot.String(),
+						Pubkey:           headerResponse.Data.Message.Pubkey.String(),
+						Signature:        headerResponse.Data.Signature.String(),
+						RelayAddr:        relayURL,
+						RelayTimestamp:   strconv.FormatUint(headerResponse.Data.Message.Header.Timestamp, 10),
+					}
+					if err := SendHTTPRequest(context.Background(), m.httpClient, http.MethodPost, m.collectorURL, mevBoostPayload, nil); err != nil {
+						log.WithError(err).Warn("error making request to mev-boost-collector")
+					}
+
+				}(slot, responsePayload, relayAddr)
+				wgCollector.Wait()
+			}
 
 			// Skip if not a higher value
 			if result.Data != nil && responsePayload.Data.Message.Value.Cmp(&result.Data.Message.Value) < 1 {
