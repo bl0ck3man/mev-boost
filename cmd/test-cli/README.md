@@ -12,9 +12,9 @@ make build-cli
 ./test-cli [generate|register|getHeader|getPayload] [-help]
 
 generate [-vd-file] [-fee-recipient]
-register [-vd-file] [-mev-boost]
-getHeader [-vd-file] [-mev-boost] [-bn] [-en] [-mm]
-getPayload [-vd-file] [-mev-boost] [-bn] [-en] [-mm]
+register [-vd-file] [-mev-boost] [-genesis-fork-version] [-genesis-validators-root]
+getHeader [-vd-file] [-mev-boost] [-bn] [-en] [-mm] [-bellatrix-fork-version] [-genesis-validators-root]
+getPayload [-vd-file] [-mev-boost] [-bn] [-en] [-mm] [-bellatrix-fork-version] [-genesis-validators-root]
 
 Env & defaults:
 	[generate]
@@ -22,26 +22,47 @@ Env & defaults:
 	-fee-recipient  VALIDATOR_FEE_RECIPIENT  = 0x0000000000000000000000000000000000000000
 
 	[register]
-	-vd-file   VALIDATOR_DATA_FILE = ./validator_data.json
-	-mev-boost MEV_BOOST_ENDPOINT  = http://127.0.0.1:18550
+	-vd-file                  VALIDATOR_DATA_FILE     = ./validator_data.json
+	-mev-boost                MEV_BOOST_ENDPOINT      = http://127.0.0.1:18550
+	-genesis-fork-version     GENESIS_FORK_VERSION    = "0x00000000" (mainnet) - network fork version
+	                                                    "0x70000069" (kiln)
+	                                                    "0x80000069" (ropsten)
 
-	[getHeader|getPayload]
-	-vd-file   VALIDATOR_DATA_FILE = ./validator_data.json
-	-mev-boost MEV_BOOST_ENDPOINT  = http://127.0.0.1:18550
-	-bn        BEACON_ENDPOINT     = http://localhost:5052
-	-en        ENGINE_ENDPOINT     = http://localhost:8545  - only used if -mm is passed or pre-bellatrix
-	-mm                                                     - mergemock mode, use mergemock defaults, only call execution and use fake slot in getHeader
+	[getHeader]
+	-vd-file    VALIDATOR_DATA_FILE = ./validator_data.json
+	-mev-boost  MEV_BOOST_ENDPOINT  = http://127.0.0.1:18550
+	-bn         BEACON_ENDPOINT     = http://localhost:5052
+	-en         ENGINE_ENDPOINT     = http://localhost:8545  - only used if -mm is passed or pre-bellatrix
+	-mm                                                      - mergemock mode, use mergemock defaults, only call execution and use fake slot in getHeader
 
-	           GENESIS_VALIDATORS_ROOT = "0x0000000000000000000000000000000000000000000000000000000000000000" - per network genesis validators root
-	                                     "0x99b09fcd43e5905236c370f184056bec6e6638cfc31a323b304fc4aa789cb4ad"   for kiln
+	-genesis-fork-version     GENESIS_FORK_VERSION    = "0x00000000" (mainnet) - network fork version
+	                                                    "0x70000069" (kiln)
+	                                                    "0x80000069" (ropsten)
 
-	           FORK_VERSION            = "0x02000000" (Bellatrix) - per network fork version
+	[getPayload]
+	-vd-file    VALIDATOR_DATA_FILE = ./validator_data.json
+	-mev-boost  MEV_BOOST_ENDPOINT  = http://127.0.0.1:18550
+	-bn         BEACON_ENDPOINT     = http://localhost:5052
+	-en         ENGINE_ENDPOINT     = http://localhost:8545  - only used if -mm is passed or pre-bellatrix
+	-mm                                                      - mergemock mode, use mergemock defaults, only call execution and use fake slot in getHeader
+
+	-genesis-validators-root  GENESIS_VALIDATORS_ROOT = "0x0000000000000000000000000000000000000000000000000000000000000000" (mainnet) - network genesis validators root
+	                                                    "0x99b09fcd43e5905236c370f184056bec6e6638cfc31a323b304fc4aa789cb4ad" (kiln)
+	                                                    "0x44f1e56283ca88b35c789f7f449e52339bc1fefe3a45913a43a6d16edcd33cf1" (ropsten)
+
+	-genesis-fork-version     GENESIS_FORK_VERSION    = "0x00000000" (mainnet) - network fork version
+	                                                    "0x70000069" (kiln)
+	                                                    "0x80000069" (ropsten)
+
+	-bellatrix-fork-version   BELLATRIX_FORK_VERSION  = "0x02000000" (mainnet) - network bellatrix fork version
+	                                                    "0x70000071" (kiln)
+	                                                    "0x80000071" (ropsten)
 ```
 
 ### Run mev-boost
 
 ```
-./mev-boost -relays https://builder-relay-kiln.flashbots.net
+./mev-boost -kiln -relays https://0xb5246e299aeb782fbc7c91b41b3284245b1ed5206134b0028b81dfb974e5900616c67847c2354479934fc4bb75519ee1@builder-relay-kiln.flashbots.net
 ```
 
 ### Run beacon node
@@ -65,13 +86,13 @@ If you wish you can substitute the randomly generated validator data in the vali
 ### Register the validator
 
 ```
-./test-cli register [-mev-boost]
+./test-cli register -genesis-fork-version <fork_version> [-mev-boost]
 ```
 
 ### Test getHeader
 
 ```
-./test-cli getHeader [-mev-boost] [-bn beacon_endpoint] [-en execution_endpoint] [-mm]
+./test-cli getHeader -genesis-fork-version <fork_version> [-mev-boost] [-bn beacon_endpoint] [-en execution_endpoint] [-mm]
 ```
 
 The call will return relay's current header.
