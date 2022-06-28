@@ -7,6 +7,7 @@ require (
 	github.com/flashbots/go-boost-utils v0.1.2
 	github.com/flashbots/go-utils v0.4.5
 	github.com/gorilla/mux v1.8.0
+	github.com/onrik/logrus v0.9.0
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/viper v1.12.0
 	github.com/stretchr/testify v1.7.1
@@ -16,6 +17,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/ferranbt/fastssz v0.1.1-0.20220303160658-88bb965b6747 // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
+	github.com/getsentry/sentry-go v0.13.0 // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.12 // indirect

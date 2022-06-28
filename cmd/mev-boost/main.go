@@ -2,12 +2,14 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flashbots/mev-boost/server"
+	"github.com/onrik/logrus/sentry"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,6 +34,7 @@ var (
 	relayTimeoutMs = flag.Int("request-timeout", defaultRelayTimeoutMs, "timeout for requests to a relay [ms]")
 	relayCheck     = flag.Bool("relay-check", defaultRelayCheck, "whether to check relay status on startup")
 	collectorURL   = flag.String("collector", "", "use external mev-boost-collector server")
+	sentryDSN      = flag.String("sentry", "", "sending logs into sentry")
 
 	// helpers
 	useGenesisForkVersionMainnet = flag.Bool("mainnet", false, "use Mainnet genesis fork version 0x00000000 (for signature validation)")
@@ -40,10 +43,33 @@ var (
 	useCustomGenesisForkVersion  = flag.String("genesis-fork-version", defaultGenesisForkVersion, "use a custom genesis fork version (for signature validation)")
 )
 
-var log = logrus.WithField("module", "cmd/mev-boost")
+var log = logrus.StandardLogger()
 
 func main() {
 	flag.Parse()
+
+	log.SetReportCaller(true)
+	log.SetLevel(logrus.TraceLevel)
+
+	if sentryDSN != nil && *sentryDSN != `` {
+		hook, sentryErr := sentry.NewHook(
+			sentry.Options{
+				Dsn:              *sentryDSN,
+				AttachStacktrace: true,
+			},
+			logrus.PanicLevel,
+			logrus.FatalLevel,
+			logrus.ErrorLevel,
+			logrus.DebugLevel,
+			logrus.InfoLevel,
+		)
+		if sentryErr != nil {
+			fmt.Println(fmt.Errorf("could not to connect to sentry %w", sentryErr))
+			os.Exit(1)
+		}
+		log.AddHook(hook)
+	}
+
 	log.Printf("mev-boost %s", version)
 
 	genesisForkVersionHex := ""
@@ -68,7 +94,7 @@ func main() {
 
 	// mevBoostCollectorURL := getEnvString(*collectorURL)
 	relayTimeout := time.Duration(*relayTimeoutMs) * time.Millisecond
-	server, err := server.NewBoostService(*listenAddr, relays, log, genesisForkVersionHex, relayTimeout, *collectorURL)
+	server, err := server.NewBoostService(*listenAddr, relays, log.WithField("module", "cmd/mev-boost"), genesisForkVersionHex, relayTimeout, *collectorURL)
 	if err != nil {
 		log.WithError(err).Fatal("failed creating the server")
 	}
