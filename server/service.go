@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flashbots/go-boost-utils/types"
@@ -17,32 +18,21 @@ import (
 )
 
 var (
-	errInvalidSlot      = errors.New("invalid slot")
-	errInvalidHash      = errors.New("invalid hash")
-	errInvalidPubkey    = errors.New("invalid pubkey")
-	errInvalidSignature = errors.New("invalid signature")
+	errInvalidSlot               = errors.New("invalid slot")
+	errInvalidHash               = errors.New("invalid hash")
+	errInvalidPubkey             = errors.New("invalid pubkey")
+	errInvalidSignature          = errors.New("invalid signature")
+	errNoSuccessfulRelayResponse = errors.New("no successful relay response")
 
 	errServerAlreadyRunning = errors.New("server already running")
 )
 
 var nilHash = types.Hash{}
+var nilResponse = struct{}{}
 
-// HTTPServerTimeouts are various timeouts for requests to the mev-boost HTTP server
-type HTTPServerTimeouts struct {
-	Read       time.Duration // Timeout for body reads. None if 0.
-	ReadHeader time.Duration // Timeout for header reads. None if 0.
-	Write      time.Duration // Timeout for writes. None if 0.
-	Idle       time.Duration // Timeout to disconnect idle client connections. None if 0.
-}
-
-// NewDefaultHTTPServerTimeouts creates default server timeouts
-func NewDefaultHTTPServerTimeouts() HTTPServerTimeouts {
-	return HTTPServerTimeouts{
-		Read:       4 * time.Second,
-		ReadHeader: 2 * time.Second,
-		Write:      6 * time.Second,
-		Idle:       10 * time.Second,
-	}
+type httpErrorResp struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 // BoostService TODO
@@ -53,11 +43,8 @@ type BoostService struct {
 	srv        *http.Server
 
 	builderSigningDomain types.Domain
-	serverTimeouts       HTTPServerTimeouts
-
-	httpClient http.Client
-
-	collectorURL string
+	httpClient           http.Client
+	collectorURL         string
 }
 
 // NewBoostService created a new BoostService
@@ -77,10 +64,28 @@ func NewBoostService(listenAddr string, relays []RelayEntry, log *logrus.Entry, 
 		log:        log.WithField("module", "service"),
 
 		builderSigningDomain: builderSigningDomain,
-		serverTimeouts:       NewDefaultHTTPServerTimeouts(),
 		httpClient:           http.Client{Timeout: relayRequestTimeout},
 		collectorURL:         mevBoostCollectorURL,
 	}, nil
+}
+
+func (m *BoostService) respondError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	resp := httpErrorResp{code, message}
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		m.log.WithField("response", resp).WithError(err).Error("Couldn't write error response")
+		http.Error(w, "", http.StatusInternalServerError)
+	}
+}
+
+func (m *BoostService) respondOK(w http.ResponseWriter, response any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		m.log.WithField("response", response).WithError(err).Error("Couldn't write OK response")
+		http.Error(w, "", http.StatusInternalServerError)
+	}
 }
 
 func (m *BoostService) getRouter() http.Handler {
@@ -107,10 +112,10 @@ func (m *BoostService) StartHTTPServer() error {
 		Addr:    m.listenAddr,
 		Handler: m.getRouter(),
 
-		ReadTimeout:       m.serverTimeouts.Read,
-		ReadHeaderTimeout: m.serverTimeouts.ReadHeader,
-		WriteTimeout:      m.serverTimeouts.Write,
-		IdleTimeout:       m.serverTimeouts.Idle,
+		ReadTimeout:       0,
+		ReadHeaderTimeout: 0,
+		WriteTimeout:      0,
+		IdleTimeout:       0,
 	}
 
 	err := m.srv.ListenAndServe()
@@ -121,15 +126,43 @@ func (m *BoostService) StartHTTPServer() error {
 }
 
 func (m *BoostService) handleRoot(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{}`)
+	m.respondOK(w, nilResponse)
 }
 
+// handleStatus sends calls to the status endpoint of every relay.
+// It returns OK if at least one returned OK, and returns KO otherwise.
 func (m *BoostService) handleStatus(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{}`)
+	var wg sync.WaitGroup
+	var numSuccessRequestsToRelay uint32
+
+	for _, r := range m.relays {
+		wg.Add(1)
+
+		go func(relay RelayEntry) {
+			defer wg.Done()
+
+			log := m.log.WithField("relay", relay.Address)
+			log.Debug("Checking relay status")
+
+			url := relay.Address + pathStatus
+			err := SendHTTPRequest(context.Background(), m.httpClient, http.MethodGet, url, nil, nil)
+
+			if err != nil {
+				log.WithError(err).Error("failed to retrieve relay status")
+				return
+			}
+			atomic.AddUint32(&numSuccessRequestsToRelay, 1)
+		}(r)
+	}
+
+	// At the end, we wait for every routine and return status according to relay's ones.
+	wg.Wait()
+
+	if numSuccessRequestsToRelay == 0 {
+		m.respondError(w, http.StatusServiceUnavailable, "all relays are unavailable")
+	} else {
+		m.respondOK(w, nilResponse)
+	}
 }
 
 // RegisterValidatorV1 - returns 200 if at least one relay returns 200
@@ -139,32 +172,8 @@ func (m *BoostService) handleRegisterValidator(w http.ResponseWriter, req *http.
 
 	payload := []types.SignedValidatorRegistration{}
 	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		m.respondError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	for _, registration := range payload {
-		if len(registration.Message.Pubkey) != 48 {
-			http.Error(w, errInvalidPubkey.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if len(registration.Signature) != 96 {
-			http.Error(w, errInvalidSignature.Error(), http.StatusBadRequest)
-			return
-		}
-
-		ok, err := types.VerifySignature(registration.Message, m.builderSigningDomain, registration.Message.Pubkey[:], registration.Signature[:])
-		if err != nil {
-			log.WithError(err).WithField("registration", registration).Error("error verifying registerValidator signature")
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if !ok {
-			log.WithError(err).WithField("registration", registration).Error("failed to verify registerValidator signature")
-			http.Error(w, errInvalidSignature.Error(), http.StatusBadRequest)
-			return
-		}
 	}
 
 	numSuccessRequestsToRelay := 0
@@ -195,11 +204,9 @@ func (m *BoostService) handleRegisterValidator(w http.ResponseWriter, req *http.
 	wg.Wait()
 
 	if numSuccessRequestsToRelay > 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{}`)
+		m.respondOK(w, nilResponse)
 	} else {
-		w.WriteHeader(http.StatusBadGateway)
+		m.respondError(w, http.StatusBadGateway, errNoSuccessfulRelayResponse.Error())
 	}
 }
 
@@ -218,17 +225,17 @@ func (m *BoostService) handleGetHeader(w http.ResponseWriter, req *http.Request)
 	log.Info("getHeader")
 
 	if _, err := strconv.ParseUint(slot, 10, 64); err != nil {
-		http.Error(w, errInvalidSlot.Error(), http.StatusBadRequest)
+		m.respondError(w, http.StatusBadRequest, errInvalidSlot.Error())
 		return
 	}
 
 	if len(pubkey) != 98 {
-		http.Error(w, errInvalidPubkey.Error(), http.StatusBadRequest)
+		m.respondError(w, http.StatusBadRequest, errInvalidPubkey.Error())
 		return
 	}
 
 	if len(parentHashHex) != 66 {
-		http.Error(w, errInvalidHash.Error(), http.StatusBadRequest)
+		m.respondError(w, http.StatusBadRequest, errInvalidHash.Error())
 		return
 	}
 
@@ -341,16 +348,11 @@ func (m *BoostService) handleGetHeader(w http.ResponseWriter, req *http.Request)
 
 	if result.Data == nil || result.Data.Message == nil || result.Data.Message.Header == nil || result.Data.Message.Header.BlockHash == nilHash {
 		log.Warn("no successful relay response")
-		http.Error(w, "no successful relay response", http.StatusBadGateway)
+		m.respondError(w, http.StatusBadGateway, errNoSuccessfulRelayResponse.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(result); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	m.respondOK(w, result)
 }
 
 func (m *BoostService) handleGetPayload(w http.ResponseWriter, req *http.Request) {
@@ -359,12 +361,12 @@ func (m *BoostService) handleGetPayload(w http.ResponseWriter, req *http.Request
 
 	payload := new(types.SignedBlindedBeaconBlock)
 	if err := json.NewDecoder(req.Body).Decode(payload); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		m.respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if len(payload.Signature) != 96 {
-		http.Error(w, errInvalidSignature.Error(), http.StatusBadRequest)
+		m.respondError(w, http.StatusBadRequest, errInvalidSignature.Error())
 		return
 	}
 
@@ -425,15 +427,11 @@ func (m *BoostService) handleGetPayload(w http.ResponseWriter, req *http.Request
 
 	if result.Data == nil || result.Data.BlockHash == nilHash {
 		log.Warn("getPayload: no valid response from relay")
-		http.Error(w, "no valid getPayload response", http.StatusBadGateway)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(result); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		m.respondError(w, http.StatusBadGateway, errNoSuccessfulRelayResponse.Error())
 		return
 	}
+
+	m.respondOK(w, result)
 }
 
 // CheckRelays sends a request to each one of the relays previously registered to get their status
