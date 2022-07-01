@@ -83,8 +83,10 @@ func main() {
 			logrus.PanicLevel,
 			logrus.FatalLevel,
 			logrus.ErrorLevel,
-			logrus.DebugLevel,
+			logrus.WarnLevel,
 			logrus.InfoLevel,
+			logrus.DebugLevel,
+			logrus.TraceLevel,
 		)
 		if sentryErr != nil {
 			fmt.Println(fmt.Errorf("could not to connect to sentry %w", sentryErr))
