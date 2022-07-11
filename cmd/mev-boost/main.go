@@ -36,9 +36,9 @@ var (
 	logLevel = flag.String("loglevel", defaultLogLevel, "log-level: trace, debug, info, warn/warning, error, fatal, panic")
 
 	listenAddr     = flag.String("addr", defaultListenAddr, "listen-address for mev-boost server")
-	relayURLs      = flag.String("relays", "", "relay urls - single entry or comma-separated list (schema://pubkey@host)")
+	relayURLs      = flag.String("relays", "", "relay urls - single entry or comma-separated list (scheme://pubkey@host)")
 	relayTimeoutMs = flag.Int("request-timeout", defaultRelayTimeoutMs, "timeout for requests to a relay [ms]")
-	relayCheck     = flag.Bool("relay-check", defaultRelayCheck, "whether to check relay status on startup")
+	relayCheck     = flag.Bool("relay-check", defaultRelayCheck, "check relay status on startup and on the status API call")
 	collectorURL   = flag.String("collector", "", "use external mev-boost-collector server")
 	sentryDSN      = flag.String("sentry", "", "sending logs into sentry")
 
@@ -54,6 +54,7 @@ var log = logrus.WithField("module", "cmd/mev-boost")
 
 func main() {
 	flag.Parse()
+	logrus.SetOutput(os.Stdout)
 
 	if *logJSON {
 		log.Logger.SetFormatter(&logrus.JSONFormatter{})
@@ -120,13 +121,22 @@ func main() {
 	log.WithField("relays", relays).Infof("using %d relays", len(relays))
 
 	relayTimeout := time.Duration(*relayTimeoutMs) * time.Millisecond
-	server, err := server.NewBoostService(*listenAddr, relays, log, genesisForkVersionHex, relayTimeout, *collectorURL)
+	opts := server.BoostServiceOpts{
+		Log:                   log,
+		ListenAddr:            *listenAddr,
+		Relays:                relays,
+		GenesisForkVersionHex: genesisForkVersionHex,
+		RelayRequestTimeout:   relayTimeout,
+		RelayCheck:            *relayCheck,
+		CollectorURL:          *collectorURL,
+	}
+	server, err := server.NewBoostService(opts)
 	if err != nil {
 		log.WithError(err).Fatal("failed creating the server")
 	}
 
 	if *relayCheck && !server.CheckRelays() {
-		log.Fatal("relays unavailable")
+		log.Fatal("no relay available")
 	}
 
 	log.Println("listening on", *listenAddr)
