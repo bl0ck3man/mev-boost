@@ -2,11 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,6 +116,22 @@ func TestWebserverRootHandler(t *testing.T) {
 	backend.boost.getRouter().ServeHTTP(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Equal(t, "{}\n", rr.Body.String())
+}
+
+func TestWebserverMaxHeaderSize(t *testing.T) {
+	backend := newTestBackend(t, 1, time.Second)
+	addr := "localhost:1234"
+	backend.boost.listenAddr = addr
+	go func() {
+		err := backend.boost.StartHTTPServer()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	path := "http://" + addr + "?" + strings.Repeat("abc", 4000) // path with characters of size over 4kb
+	code, err := SendHTTPRequest(context.Background(), *http.DefaultClient, http.MethodGet, path, "test", nil, nil)
+	require.Error(t, err)
+	require.Equal(t, http.StatusRequestHeaderFieldsTooLarge, code)
+	backend.boost.srv.Close()
 }
 
 // Example good registerValidator payload
@@ -450,7 +469,6 @@ func TestCheckRelays(t *testing.T) {
 	t.Run("At least one relay is okay", func(t *testing.T) {
 		backend := newTestBackend(t, 3, time.Second)
 		status := backend.boost.CheckRelays()
-
 		require.Equal(t, true, status)
 	})
 
@@ -459,7 +477,20 @@ func TestCheckRelays(t *testing.T) {
 		backend.relays[0].Server.Close()
 
 		status := backend.boost.CheckRelays()
+		require.Equal(t, false, status)
+	})
 
+	t.Run("Should not follow redirects", func(t *testing.T) {
+		backend := newTestBackend(t, 1, time.Second)
+		redirectAddress := backend.relays[0].Server.URL
+		backend.relays[0].Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, redirectAddress, http.StatusTemporaryRedirect)
+		}))
+
+		url, err := url.ParseRequestURI(backend.relays[0].Server.URL)
+		require.NoError(t, err)
+		backend.boost.relays[0].URL = url
+		status := backend.boost.CheckRelays()
 		require.Equal(t, false, status)
 	})
 }
