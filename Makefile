@@ -12,11 +12,11 @@ v:
 
 .PHONY: build
 build:
-	go build -ldflags "-X main.version=${VERSION}" -v -o mev-boost ./cmd/mev-boost
+	go build -ldflags "-X 'github.com/flashbots/mev-boost/config.Version=${VERSION}' -X 'github.com/flashbots/mev-boost/config.BuildTime=$(shell date)'" -v -o mev-boost .
 
 .PHONY: build-testcli
 build-testcli:
-	go build -ldflags "-X main.version=${VERSION}" -v -o test-cli ./cmd/test-cli
+	go build -ldflags "-X 'github.com/flashbots/mev-boost/config.Version=${VERSION}' -X 'github.com/flashbots/mev-boost/config.BuildTime=$(shell date)'" -v -o test-cli ./cmd/test-cli
 
 .PHONY: test
 test:
@@ -55,7 +55,7 @@ run-mergemock-integration: build
 
 .PHONY: build-for-docker
 build-for-docker:
-	GOOS=linux go build -ldflags "-X main.version=${VERSION}" -v -o mev-boost ./cmd/mev-boost
+	GOOS=linux go build -ldflags "-X 'github.com/flashbots/mev-boost/config.Version=${VERSION}' -X 'github.com/flashbots/mev-boost/config.BuildTime=$(shell date)'" -v -o mev-boost .
 
 .PHONY: docker-image
 docker-image:
