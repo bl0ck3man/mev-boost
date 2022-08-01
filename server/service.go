@@ -345,7 +345,7 @@ func (m *BoostService) handleGetHeader(w http.ResponseWriter, req *http.Request)
 
 				wgCollector.Add(1)
 				go func(slot string, headerResponse *types.GetHeaderResponse, relayAddr string) {
-					defer wg.Done()
+					defer wgCollector.Done()
 
 					slotNumber, err := strconv.ParseUint(slot, 10, 32)
 					if err != nil {
